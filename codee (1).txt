@@ -1,0 +1,202 @@
+import tkinter as tk
+from tkinter import simpledialog, messagebox
+import socket
+import threading
+import struct
+
+SERVER_PORT = 20001
+CANVAS_WIDTH = 800
+CANVAS_HEIGHT = 600
+DRAW_COLOR = "#000000"
+DRAW_SIZE = 5
+
+class WhiteboardApp:
+    def _init_(self):
+        self.root = tk.Tk()
+        self.root.title("P2P Whiteboard")
+        self.username = simpledialog.askstring("Username", "Enter your username:", parent=self.root)
+        if self.username is None:
+            exit()
+
+
+        self.canvas = tk.Canvas(self.root, width=CANVAS_WIDTH, height=CANVAS_HEIGHT, bg="white")
+        self.canvas.pack()
+
+        self.clear_button = tk.Button(self.root, text="Clear", command=self.clear_canvas)
+        self.clear_button.pack()
+
+        self.canvas.bind("<B1-Motion>", self.draw_on_canvas)
+
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_socket.bind(("172.20.10.4", SERVER_PORT))
+        self.server_socket.listen(1)
+
+        self.client_sockets = []
+        self.input_streams = []
+        self.output_streams = []
+
+        threading.Thread(target=self.accept_connections).start()
+        print("Server is started, waiting for connections....")
+    def accept_connections(self):
+        
+        try:
+            while True:
+                client_socket, addr = self.server_socket.accept()
+                print("Client connected: ", addr)
+                self.client_sockets.append(client_socket)
+                self.input_streams.append(client_socket.makefile('rb'))
+                self.output_streams.append(client_socket.makefile('wb'))
+                threading.Thread(target=self.handle_client, args=(len(self.client_sockets)-1,)).start()#
+
+        except Exception as e:
+            print(e)
+
+    def handle_client(self, client_index):
+        try:
+            while True:
+                message = self.input_streams[client_index].readline().strip()
+                self.process_message(message.decode())
+
+        except Exception as e:
+            print(e)
+
+        finally:
+            self.input_streams[client_index].close()
+            self.output_streams[client_index].close()
+            self.client_sockets[client_index].close()
+            print("Client disconnected.")
+
+    def draw_on_canvas(self, event):
+        x, y = event.x, event.y
+        self.canvas.create_oval(x, y, x+DRAW_SIZE, y+DRAW_SIZE, fill=DRAW_COLOR)
+        self.send_draw_message(x, y)
+
+    def draw_on_canvas_remote(self, x, y):
+        self.canvas.create_oval(x, y, x+DRAW_SIZE, y+DRAW_SIZE, fill=DRAW_COLOR)
+        self.send_draw_message_remote(x, y)
+
+    def send_draw_message(self, x, y):
+        if self.output_streams:
+            for output_stream in self.output_streams:
+                output_stream.write(f"DRAW:{x}:{y}\n".encode())
+                output_stream.flush()
+
+    def send_draw_message_remote(self, x, y):
+        if len(self.output_streams) > 1:
+            self.output_streams[1].write(f"DRAW:{x}:{y}\n".encode())
+            self.output_streams[1].flush()
+
+    def send_clear_message(self):
+        if self.output_streams:
+            for output_stream in self.output_streams:
+                output_stream.write("CLEAR\n".encode())
+                output_stream.flush()
+
+    def clear_canvas(self):
+        self.canvas.delete("all")
+        self.send_clear_message()
+
+    def process_message(self, message):
+        parts = message.split(":")
+        if len(parts) == 3:
+            action, x, y = parts
+            if action == "DRAW":
+                self.draw_on_canvas_remote(float(x), float(y))
+        elif message == "CLEAR":
+            self.clear_canvas()
+
+    def run(self):
+        self.root.mainloop()
+        
+if _name_ == "_main_":
+    app = WhiteboardApp()
+    app.run()
+-----------------------------------------------
+import tkinter as tk
+from tkinter import simpledialog, messagebox
+import socket
+import threading
+import struct
+
+SERVER_IP = "172.20.10.4"  # Replace with the IP address or hostname of the server
+SERVER_PORT = 20001
+CANVAS_WIDTH = 800
+CANVAS_HEIGHT = 600
+DRAW_COLOR = "#000000"
+DRAW_SIZE = 5
+
+class WhiteboardApp:
+    def _init_(self):
+        self.root = tk.Tk()
+        self.root.title("P2P Whiteboard")
+        self.username = simpledialog.askstring("Username", "Enter your username:", parent=self.root)
+        if self.username is None:
+            exit()
+
+        self.canvas = tk.Canvas(self.root, width=CANVAS_WIDTH, height=CANVAS_HEIGHT, bg="white")
+        self.canvas.pack()
+
+        self.clear_button = tk.Button(self.root, text="Clear", command=self.clear_canvas)
+        self.clear_button.pack()
+
+        self.canvas.bind("<B1-Motion>", self.draw_on_canvas)
+
+        self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.input_stream = None
+        self.output_stream = None
+
+        threading.Thread(target=self.connect_to_server).start()
+
+    def connect_to_server(self):
+        try:
+            self.client_socket.connect((SERVER_IP, SERVER_PORT))
+
+            self.input_stream = self.client_socket.makefile('rb')
+            self.output_stream = self.client_socket.makefile('wb')
+
+            print("Connected to the server.")
+            while True:
+                message = self.input_stream.readline().strip()
+                self.process_message(message.decode())
+        except Exception as e:
+            print(e)
+
+    def process_message(self, message):
+        parts = message.split(":")
+        if len(parts) == 3:
+            action, x, y = parts
+            if action == "DRAW":
+                self.draw_on_canvas_remote(float(x), float(y))
+        elif message == "CLEAR":
+            self.clear_canvas()
+
+    def draw_on_canvas(self, event):
+        x, y = event.x, event.y
+        self.canvas.create_oval(x, y, x+DRAW_SIZE, y+DRAW_SIZE, fill=DRAW_COLOR)
+        self.send_draw_message(x, y)
+
+    def draw_on_canvas_remote(self, x, y):
+        self.canvas.create_oval(x, y, x+DRAW_SIZE, y+DRAW_SIZE, fill=DRAW_COLOR)
+
+    def clear_canvas(self):
+        self.canvas.delete("all")
+        self.send_clear_message()
+
+    def send_draw_message(self, x, y):
+        if self.output_stream:
+            self.output_stream.write(f"DRAW:{x}:{y}\n".encode())
+            self.output_stream.flush()
+
+    def send_clear_message(self):
+        if self.output_stream:
+            self.output_stream.write("CLEAR\n".encode())
+            self.output_stream.flush()
+
+    def run(self):
+        self.root.mainloop()
+
+
+if _name_ == "_main_":
+    app = WhiteboardApp()
+    app.run()
